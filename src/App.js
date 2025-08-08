@@ -236,9 +236,32 @@ const InsaneInTheBrainGame = () => {
           className="text-gray-400 hover:text-black transition-colors">
           <div className="w-6 h-6 bg-current rounded-sm"></div>
         </a>
-        <a href="https://bsky.app/profile/insaneinthebrain" target="_blank" rel="noopener noreferrer"
-          className="text-gray-400 hover:text-blue-500 transition-colors">
+        <a
+          href="https://bsky.app/profile/insaneinthebrain"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-gray-400 hover:text-blue-500 transition-colors"
+        >
           <div className="w-6 h-6 bg-current rounded-full"></div>
         </a>
-        <a href="https://substack.com/@insaneinthe
-
+        <a
+          href="https://substack.com/@insaneinthebrain"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-gray-400 hover:text-orange-500 transition-colors"
+        >
+          <div className="w-6 h-6 bg-current rounded-sm"></div>
+        </a>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-8">
+      <h1 className="text-3xl font-bold text-center mb-6">Insane In The Brain Game</h1>
+      <Footer />
+    </div>
+  );
+};
+
+export default InsaneInTheBrainGame;
