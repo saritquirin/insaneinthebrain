@@ -277,7 +277,14 @@ const InsaneInTheBrainGame = () => {
           className="w-full bg-white text-gray-800 font-bold py-4 px-6 rounded-lg border-2 border-gray-200 hover:border-gray-300 transition-all flex items-center justify-center"
         >
           <Users className="w-5 h-5 mr-2" />
-          Join Game
+           </button>
+
+        <button
+              <p className="text-gray-600">{user.points} points</p>
+            </div>
+          </div>
+          onClick={() => navigateTo('leaderboard')}
+Join Game
         </button>
         
         <button
