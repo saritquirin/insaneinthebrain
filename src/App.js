@@ -549,7 +549,8 @@ const CreateGamePage = () => {
             is_host: true
           }]);
         
-        setCreatedGame(game);
+        alert('Game created! Code: ' + game.code);  // ADD THIS
+	setCreatedGame(game);
         setGameState(game);
         setGameCreated(true);
       }
