@@ -105,6 +105,48 @@ const InsaneInTheBrainGame = () => {
   const [currentGame, setCurrentGame] = useState(null);
   const [players, setPlayers] = useState([]);
   
+  // Load saved state on mount
+  useEffect(() => {
+    const savedGame = localStorage.getItem('currentGame');
+    const savedUser = localStorage.getItem('currentUser');
+    const savedPage = localStorage.getItem('currentPage');
+    
+    if (savedGame) {
+      try {
+        setCurrentGame(JSON.parse(savedGame));
+      } catch (e) {
+        console.error('Error parsing saved game:', e);
+      }
+    }
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error('Error parsing saved user:', e);
+      }
+    }
+    if (savedPage && savedGame) {
+      setCurrentPage(savedPage);
+    }
+  }, []);
+
+  // Save state whenever it changes
+  useEffect(() => {
+    if (currentGame) {
+      localStorage.setItem('currentGame', JSON.stringify(currentGame));
+      localStorage.setItem('currentPage', currentPage);
+    } else {
+      localStorage.removeItem('currentGame');
+      localStorage.removeItem('currentPage');
+    }
+  }, [currentGame, currentPage]);
+
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('currentUser', JSON.stringify(user));
+    }
+  }, [user]);
+  
   const navigateTo = (page) => {
     setCurrentPage(page);
   };
@@ -138,22 +180,28 @@ const InsaneInTheBrainGame = () => {
 
     const loadPlayers = async () => {
       console.log('Loading players for game:', currentGame.id);
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('players')
         .select('*')
         .eq('game_id', currentGame.id)
         .order('created_at');
       
-      console.log('Loaded players:', data);
+      console.log('Loaded players:', data, 'Error:', error);
       if (data) setPlayers(data);
     };
 
     loadPlayers();
 
     const channel = supabase
-      .channel(`game:${currentGame.id}`)
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'players', filter: `game_id=eq.${currentGame.id}` },
+      .channel(`game-${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'players',
+          filter: `game_id=eq.${currentGame.id}`
+        },
         (payload) => {
           console.log('Real-time update received:', payload);
           loadPlayers();
@@ -164,6 +212,7 @@ const InsaneInTheBrainGame = () => {
       });
 
     return () => {
+      console.log('Cleaning up subscription');
       supabase.removeChannel(channel);
     };
   }, [currentGame?.id]);
