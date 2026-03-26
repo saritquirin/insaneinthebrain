@@ -498,6 +498,10 @@ const InsaneInTheBrainGame = () => {
       
       setLoading(true);
       
+	console.log('Creating game with prompt:', prompt);
+	console.log('Generated code:', code);
+	console.log('Teams:', team1, team2);
+
       const code = generateGameCode();
       const [team1, team2] = generateTeamNames();
       
@@ -512,6 +516,8 @@ const InsaneInTheBrainGame = () => {
         }])
         .select()
         .single();
+	
+	console.log('Game creation result:', { game, error });
       
       if (game && user) {
         const colors = ['#FF6B9D', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
