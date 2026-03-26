@@ -1,25 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { QrCode, Users, Clock, Trophy, Share2, Check, Home, Plus, LogIn, User, Crown, Info, Youtube, Instagram, Camera } from 'lucide-react';
-
-// Mock data for demonstration
-const mockUsers = [
-  { id: '1', display_name: 'Alice', avatar: '🎨', points: 150 },
-  { id: '2', display_name: 'Bob', avatar: '🎭', points: 120 },
-  { id: '3', display_name: 'Charlie', avatar: '🎪', points: 95 }
-];
-
-const mockGames = [
-  {
-    id: 'game123',
-    prompt: 'dragons',
-    teams: ['Sparkly Unicorns', 'Bouncy Pandas'],
-    players: [
-      { id: '1', name: 'Alice', team: 0, color: '#FF6B9D', isHost: true },
-      { id: '2', name: 'Bob', team: 1, color: '#4ECDC4' },
-      { id: '3', name: 'Charlie', team: 0, color: '#45B7D1' }
-    ]
-  }
-];
+import { supabase } from './lib/supabase';
 
 // Utility Components
 const GameTimer = ({ timeLeft, onTimeUp }) => {
@@ -61,12 +42,12 @@ const QRCodeDisplay = ({ gameCode }) => {
   );
 };
 
-const PlayerList = ({ players }) => {
+const PlayerList = ({ players, teams }) => {
   const teamColors = ['#FF6B9D', '#4ECDC4'];
   
   return (
     <div className="space-y-4">
-      {mockGames[0].teams.map((teamName, teamIndex) => (
+      {teams && teams.map((teamName, teamIndex) => (
         <div key={teamIndex} className="bg-white rounded-lg p-4 border-2 border-gray-100">
           <h3 className="font-bold text-lg mb-3 text-gray-800" style={{ color: teamColors[teamIndex] }}>
             {teamName}
@@ -79,7 +60,7 @@ const PlayerList = ({ players }) => {
                   style={{ backgroundColor: player.color }}
                 ></div>
                 <span className="font-medium text-gray-800">{player.name}</span>
-                {player.isHost && <Crown className="w-4 h-4 ml-2 text-yellow-500" />}
+                {player.is_host && <Crown className="w-4 h-4 ml-2 text-yellow-500" />}
               </div>
             ))}
           </div>
@@ -89,16 +70,9 @@ const PlayerList = ({ players }) => {
   );
 };
 
-const MadLibsForm = ({ onSubmit }) => {
+const MadLibsForm = ({ segments, onSubmit }) => {
   const [answers, setAnswers] = useState({});
   const [showConfirm, setShowConfirm] = useState(false);
-  
-  const mockSegments = [
-    { id: 1, prompt: 'noun', placeholder: 'e.g., banana' },
-    { id: 2, prompt: 'adjective', placeholder: 'e.g., sparkly' },
-    { id: 3, prompt: 'verb', placeholder: 'e.g., dancing' },
-    { id: 4, prompt: 'something that goes whoosh', placeholder: 'e.g., wind' }
-  ];
   
   const handleSubmit = () => {
     if (showConfirm) {
@@ -110,15 +84,15 @@ const MadLibsForm = ({ onSubmit }) => {
   
   return (
     <div className="space-y-4">
-      {mockSegments.map(segment => (
+      {segments.map(segment => (
         <div key={segment.id} className="bg-white p-4 rounded-lg border-2 border-gray-100">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            {segment.prompt}
+            {segment.prompt_type}
           </label>
           <input
             type="text"
             className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-pink-300 focus:outline-none"
-            placeholder={segment.placeholder}
+            placeholder={`Enter a ${segment.prompt_type}...`}
             value={answers[segment.id] || ''}
             onChange={(e) => setAnswers({...answers, [segment.id]: e.target.value})}
           />
@@ -144,15 +118,13 @@ const MadLibsForm = ({ onSubmit }) => {
   );
 };
 
-const StoryRevealCard = ({ teamName, playerContributions }) => {
+const StoryRevealCard = ({ teamName, story }) => {
   const [copied, setCopied] = useState(false);
-  
-  const mockStory = `Once upon a time, there was a ${playerContributions?.noun || 'dragon'} who was incredibly ${playerContributions?.adjective || 'magnificent'}. Every morning, it would ${playerContributions?.verb || 'soar'} through the clouds while ${playerContributions?.whoosh || 'wind'} rushed past its wings. The end.`;
   
   const handleShare = async () => {
     const shareData = {
       title: `${teamName} Story`,
-      text: mockStory,
+      text: story,
       url: window.location.href
     };
     
@@ -163,7 +135,7 @@ const StoryRevealCard = ({ teamName, playerContributions }) => {
         console.log('Share cancelled');
       }
     } else {
-      await navigator.clipboard.writeText(mockStory);
+      await navigator.clipboard.writeText(story);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -181,8 +153,8 @@ const StoryRevealCard = ({ teamName, playerContributions }) => {
         </button>
       </div>
       <div className="prose prose-lg">
-        <p className="text-gray-800 leading-relaxed font-serif">
-          {mockStory}
+        <p className="text-gray-800 leading-relaxed font-serif whitespace-pre-wrap">
+          {story}
         </p>
       </div>
     </div>
@@ -210,6 +182,8 @@ const InsaneInTheBrainGame = () => {
   const [currentPage, setCurrentPage] = useState('home');
   const [user, setUser] = useState(null);
   const [gameState, setGameState] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [segments, setSegments] = useState([]);
   const [timeLeft, setTimeLeft] = useState(300);
   const [hasVoted, setHasVoted] = useState(false);
   
@@ -221,6 +195,59 @@ const InsaneInTheBrainGame = () => {
   const handleLogin = (userData) => {
     setUser(userData);
     navigateTo('home');
+  };
+
+  // Generate random game code
+  const generateGameCode = () => {
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+  };
+
+  // Generate team names
+  const generateTeamNames = () => {
+    const adjectives = ['Sparkly', 'Bouncy', 'Fluffy', 'Giggling', 'Dancing', 'Flying', 'Sneaky', 'Magical'];
+    const animals = ['Unicorns', 'Pandas', 'Dragons', 'Penguins', 'Llamas', 'Otters', 'Narwhals', 'Hedgehogs'];
+    
+    const team1 = `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${animals[Math.floor(Math.random() * animals.length)]}`;
+    let team2 = `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${animals[Math.floor(Math.random() * animals.length)]}`;
+    
+    while (team1 === team2) {
+      team2 = `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${animals[Math.floor(Math.random() * animals.length)]}`;
+    }
+    
+    return [team1, team2];
+  };
+
+  // Subscribe to real-time player updates
+  useEffect(() => {
+    if (!gameState?.id) return;
+
+    const channel = supabase
+      .channel(`game:${gameState.id}`)
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'players', filter: `game_id=eq.${gameState.id}` },
+        () => {
+          loadPlayers(gameState.id);
+        }
+      )
+      .subscribe();
+
+    loadPlayers(gameState.id);
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [gameState?.id]);
+
+  const loadPlayers = async (gameId) => {
+    const { data, error } = await supabase
+      .from('players')
+      .select('*')
+      .eq('game_id', gameId)
+      .order('created_at');
+    
+    if (data) {
+      setPlayers(data);
+    }
   };
   
   // Footer Component
@@ -348,15 +375,22 @@ const InsaneInTheBrainGame = () => {
       }
     };
     
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
       e.preventDefault();
       if (displayName.trim()) {
-        handleLogin({
-          id: Date.now().toString(),
-          display_name: displayName,
-          avatar: avatar === 'photo' ? uploadedPhoto : avatar,
-          points: 0
-        });
+        const { data, error } = await supabase
+          .from('users')
+          .insert([{
+            display_name: displayName,
+            avatar: avatar === 'photo' ? uploadedPhoto : avatar,
+            points: 0
+          }])
+          .select()
+          .single();
+        
+        if (data) {
+          handleLogin(data);
+        }
       }
     };
     
@@ -456,23 +490,48 @@ const InsaneInTheBrainGame = () => {
   const CreateGamePage = () => {
     const [prompt, setPrompt] = useState('');
     const [gameCreated, setGameCreated] = useState(false);
-    const [gameCode, setGameCode] = useState('');
+    const [loading, setLoading] = useState(false);
     
-    const handleCreateGame = (e) => {
+    const handleCreateGame = async (e) => {
       e.preventDefault();
-      if (prompt.trim()) {
-        const newGameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        setGameCode(newGameCode);
-        setGameCreated(true);
-        
-        const gameData = {
-          id: newGameCode.toLowerCase(),
+      if (!prompt.trim()) return;
+      
+      setLoading(true);
+      
+      const code = generateGameCode();
+      const [team1, team2] = generateTeamNames();
+      
+      const { data: game, error } = await supabase
+        .from('games')
+        .insert([{
+          code: code,
           prompt: prompt,
-          code: newGameCode,
-          players: user ? [{ ...user, isHost: true, team: 0, color: '#FF6B9D' }] : []
-        };
-        setGameState(gameData);
+          status: 'lobby',
+          team1_name: team1,
+          team2_name: team2
+        }])
+        .select()
+        .single();
+      
+      if (game && user) {
+        const colors = ['#FF6B9D', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+        
+        await supabase
+          .from('players')
+          .insert([{
+            game_id: game.id,
+            user_id: user.id,
+            name: user.display_name,
+            team: 0,
+            color: colors[0],
+            is_host: true
+          }]);
+        
+        setGameState(game);
+        setGameCreated(true);
       }
+      
+      setLoading(false);
     };
     
     if (gameCreated) {
@@ -481,11 +540,11 @@ const InsaneInTheBrainGame = () => {
           <h2 className="text-2xl font-bold text-gray-800 text-center">Game Created!</h2>
           <p className="text-center text-gray-600">Prompt: <span className="font-bold">{prompt}</span></p>
           
-          <QRCodeDisplay gameCode={gameCode} />
+          <QRCodeDisplay gameCode={gameState.code} />
           
           <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
             <p className="text-sm text-blue-800 text-center">
-              Share this link: <span className="font-mono">insane-brain.com/join/{gameCode}</span>
+              Share this link: <span className="font-mono">insane-brain.com/join/{gameState.code}</span>
             </p>
           </div>
           
@@ -529,10 +588,10 @@ const InsaneInTheBrainGame = () => {
             
             <button
               onClick={handleCreateGame}
-              disabled={!prompt.trim()}
+              disabled={!prompt.trim() || loading}
               className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Create Game
+              {loading ? 'Creating...' : 'Create Game'}
             </button>
           </div>
         </div>
@@ -545,25 +604,53 @@ const InsaneInTheBrainGame = () => {
   const JoinGamePage = () => {
     const [gameCode, setGameCode] = useState('');
     const [playerName, setPlayerName] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
     
-    const handleJoinGame = (e) => {
+    const handleJoinGame = async (e) => {
       e.preventDefault();
-      if (gameCode.trim() && playerName.trim()) {
-        navigateTo('lobby', {
-          id: gameCode.toLowerCase(),
-          code: gameCode.toUpperCase(),
-          players: [
-            ...mockGames[0].players,
-            { 
-              id: Date.now().toString(), 
-              name: playerName, 
-              team: Math.floor(Math.random() * 2), 
-              color: '#95E1D3',
-              isHost: false 
-            }
-          ]
-        });
+      if (!gameCode.trim() || !playerName.trim()) return;
+      
+      setLoading(true);
+      setError('');
+      
+      const { data: game, error: gameError } = await supabase
+        .from('games')
+        .select('*')
+        .eq('code', gameCode.toUpperCase())
+        .single();
+      
+      if (!game) {
+        setError('Game not found. Check the code and try again.');
+        setLoading(false);
+        return;
       }
+      
+      const { data: existingPlayers } = await supabase
+        .from('players')
+        .select('team')
+        .eq('game_id', game.id);
+      
+      const team0Count = existingPlayers?.filter(p => p.team === 0).length || 0;
+      const team1Count = existingPlayers?.filter(p => p.team === 1).length || 0;
+      const assignedTeam = team0Count <= team1Count ? 0 : 1;
+      
+      const colors = ['#FF6B9D', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
+      const playerColor = colors[existingPlayers?.length % colors.length];
+      
+      await supabase
+        .from('players')
+        .insert([{
+          game_id: game.id,
+          name: playerName,
+          team: assignedTeam,
+          color: playerColor,
+          is_host: false
+        }]);
+      
+      setGameState(game);
+      navigateTo('lobby', game);
+      setLoading(false);
     };
     
     return (
@@ -572,6 +659,12 @@ const InsaneInTheBrainGame = () => {
         
         <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
           <div className="space-y-4">
+            {error && (
+              <div className="bg-red-50 border-2 border-red-200 p-3 rounded-lg">
+                <p className="text-red-800 text-sm text-center">{error}</p>
+              </div>
+            )}
+            
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Game Code</label>
               <input
@@ -597,10 +690,10 @@ const InsaneInTheBrainGame = () => {
             
             <button
               onClick={handleJoinGame}
-              disabled={!gameCode.trim() || !playerName.trim()}
+              disabled={!gameCode.trim() || !playerName.trim() || loading}
               className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Join Game
+              {loading ? 'Joining...' : 'Join Game'}
             </button>
           </div>
         </div>
@@ -611,24 +704,30 @@ const InsaneInTheBrainGame = () => {
   };
   
   const GameLobbyPage = () => {
-    const isHost = gameState?.players?.find(p => p.id === user?.id)?.isHost || false;
+    const currentPlayer = players.find(p => p.name === user?.display_name);
+    const isHost = currentPlayer?.is_host || false;
     
     return (
       <div className="space-y-6">
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-800">Game Lobby</h2>
-          <p className="text-gray-600">Prompt: <span className="font-bold">{gameState?.prompt || 'dragons'}</span></p>
-          <p className="text-gray-600">Code: <span className="font-mono font-bold">{gameState?.code || 'GAME123'}</span></p>
+          <p className="text-gray-600">Prompt: <span className="font-bold">{gameState?.prompt}</span></p>
+          <p className="text-gray-600">Code: <span className="font-mono font-bold">{gameState?.code}</span></p>
+          <p className="text-sm text-gray-500 mt-2">{players.length} player{players.length !== 1 ? 's' : ''} joined</p>
         </div>
         
-        <PlayerList players={mockGames[0].players} />
+        <PlayerList 
+          players={players} 
+          teams={[gameState?.team1_name, gameState?.team2_name]}
+        />
         
         {isHost && (
           <button
             onClick={() => navigateTo('play')}
-            className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all"
+            disabled={players.length < 2}
+            className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Start Game
+            {players.length < 2 ? 'Waiting for more players...' : 'Start Game'}
           </button>
         )}
         
@@ -637,16 +736,6 @@ const InsaneInTheBrainGame = () => {
             <p className="text-yellow-800 text-center">Waiting for host to start the game...</p>
           </div>
         )}
-        
-        <div className="border-t-2 border-dashed border-gray-300 pt-4">
-          <p className="text-sm text-gray-500 text-center mb-3">Demo Navigation:</p>
-          <button
-            onClick={() => navigateTo('play')}
-            className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg text-sm"
-          >
-            Go to Game Page (Demo)
-          </button>
-        </div>
         
         <Footer />
       </div>
@@ -669,25 +758,10 @@ const InsaneInTheBrainGame = () => {
           </p>
         </div>
         
-        <MadLibsForm onSubmit={() => navigateTo('results')} />
-        
-        <div className="border-t-2 border-dashed border-gray-300 pt-4">
-          <p className="text-sm text-gray-500 text-center mb-3">Demo Navigation:</p>
-          <div className="space-y-2">
-            <button
-              onClick={() => navigateTo('results')}
-              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg text-sm"
-            >
-              Skip to Results Page
-            </button>
-            <button
-              onClick={() => setTimeLeft(5)}
-              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-lg text-sm"
-            >
-              Set Timer to 5 Seconds
-            </button>
-          </div>
-        </div>
+        <MadLibsForm 
+          segments={segments}
+          onSubmit={() => navigateTo('results')}
+        />
         
         <Footer />
       </div>
@@ -695,50 +769,19 @@ const InsaneInTheBrainGame = () => {
   };
   
   const GameResultsPage = () => {
-    const mockContributions = {
-      noun: 'banana',
-      adjective: 'sparkly',
-      verb: 'dancing',
-      whoosh: 'kazoo sounds'
-    };
-    
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-800 text-center">The Big Reveal!</h2>
         
         <StoryRevealCard 
-          teamName="Sparkly Unicorns" 
-          playerContributions={mockContributions}
+          teamName={gameState?.team1_name || 'Team 1'} 
+          story={gameState?.team1_story || 'Story coming soon...'}
         />
         
         <StoryRevealCard 
-          teamName="Bouncy Pandas" 
-          playerContributions={{}}
+          teamName={gameState?.team2_name || 'Team 2'} 
+          story={gameState?.team2_story || 'Story coming soon...'}
         />
-        
-        <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
-          <h3 className="text-lg font-bold text-gray-800 mb-4 text-center">Vote for the Funniest!</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-              <span className="text-gray-800">Alice's "banana"</span>
-              <VoteButton 
-                segmentId="1" 
-                playerId="1" 
-                onVote={() => setHasVoted(true)}
-                hasVoted={hasVoted}
-              />
-            </div>
-            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-              <span className="text-gray-800">Bob's "sparkly"</span>
-              <VoteButton 
-                segmentId="2" 
-                playerId="2" 
-                onVote={() => setHasVoted(true)}
-                hasVoted={hasVoted}
-              />
-            </div>
-          </div>
-        </div>
         
         <button
           onClick={() => navigateTo('home')}
@@ -804,27 +847,51 @@ const InsaneInTheBrainGame = () => {
     </div>
   );
   
-  const LeaderboardPage = () => (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-gray-800 text-center">Leaderboard</h2>
+  const LeaderboardPage = () => {
+    const [topPlayers, setTopPlayers] = useState([]);
+    
+    useEffect(() => {
+      const loadLeaderboard = async () => {
+        const { data } = await supabase
+          .from('users')
+          .select('*')
+          .order('points', { ascending: false })
+          .limit(10);
+        
+        if (data) setTopPlayers(data);
+      };
       
-      <div className="bg-white rounded-lg border-2 border-gray-100 overflow-hidden">
-        {mockUsers.map((mockUser, index) => (
-          <div key={mockUser.id} className="flex items-center p-4 border-b border-gray-100 last:border-b-0">
-            <span className="text-2xl font-bold text-gray-400 w-8">#{index + 1}</span>
-            <span className="text-2xl mx-3">{mockUser.avatar}</span>
-            <div className="flex-1">
-              <h3 className="font-bold text-gray-800">{mockUser.display_name}</h3>
-              <p className="text-gray-600">{mockUser.points} points</p>
+      loadLeaderboard();
+    }, []);
+    
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold text-gray-800 text-center">Leaderboard</h2>
+        
+        <div className="bg-white rounded-lg border-2 border-gray-100 overflow-hidden">
+          {topPlayers.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              No players yet. Be the first!
             </div>
-            {index === 0 && <Trophy className="w-6 h-6 text-yellow-500" />}
-          </div>
-        ))}
+          ) : (
+            topPlayers.map((player, index) => (
+              <div key={player.id} className="flex items-center p-4 border-b border-gray-100 last:border-b-0">
+                <span className="text-2xl font-bold text-gray-400 w-8">#{index + 1}</span>
+                <span className="text-2xl mx-3">{player.avatar}</span>
+                <div className="flex-1">
+                  <h3 className="font-bold text-gray-800">{player.display_name}</h3>
+                  <p className="text-gray-600">{player.points} points</p>
+                </div>
+                {index === 0 && <Trophy className="w-6 h-6 text-yellow-500" />}
+              </div>
+            ))
+          )}
+        </div>
+        
+        <Footer />
       </div>
-      
-      <Footer />
-    </div>
-  );
+    );
+  };
   
   const renderCurrentPage = () => {
     switch(currentPage) {
@@ -858,15 +925,6 @@ const InsaneInTheBrainGame = () => {
               className="p-2 text-gray-600 hover:text-gray-800 transition-colors"
             >
               <Home className="w-6 h-6" />
-            </button>
-          )}
-          
-          {user && currentPage === 'home' && (
-            <button 
-              onClick={() => navigateTo('profile')}
-              className="p-2 text-gray-600 hover:text-gray-800 transition-colors"
-            >
-              <User className="w-6 h-6" />
             </button>
           )}
         </div>
