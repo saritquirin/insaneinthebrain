@@ -304,14 +304,19 @@ const InsaneInTheBrainGame = () => {
       ) : null}
       
       <div className="space-y-4">
-        <button
-          onClick={() => navigateTo('create')}
-          className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-4 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all flex items-center justify-center"
-        >
-          <Plus className="w-5 h-5 mr-2" />
-          Create Game
-        </button>
-        
+	<button
+	  onClick={() => {
+	    if (!user) {
+     	 navigateTo('login');
+	    } else {
+	      navigateTo('create');
+	    }
+	  }}
+  className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-4 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all flex items-center justify-center"
+>
+  <Plus className="w-5 h-5 mr-2" />
+  Create Game
+</button>        
         <button
           onClick={() => navigateTo('join')}
           className="w-full bg-white text-gray-800 font-bold py-4 px-6 rounded-lg border-2 border-gray-200 hover:border-gray-300 transition-all flex items-center justify-center"
