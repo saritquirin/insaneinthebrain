@@ -487,24 +487,27 @@ const InsaneInTheBrainGame = () => {
     );
   };
   
-  const CreateGamePage = () => {
-    const [prompt, setPrompt] = useState('');
-    const [gameCreated, setGameCreated] = useState(false);
-    const [loading, setLoading] = useState(false);
-    
-    const handleCreateGame = async (e) => {
-      e.preventDefault();
-      if (!prompt.trim()) return;
-      
-      setLoading(true);
-      
-	console.log('User object:', user); 
-	console.log('Creating game with prompt:', prompt);
-	console.log('Generated code:', code);
-	console.log('Teams:', team1, team2);
 
+const CreateGamePage = () => {
+  const [prompt, setPrompt] = useState('');
+  const [gameCreated, setGameCreated] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [createdGame, setCreatedGame] = useState(null);
+  
+  const handleCreateGame = async (e) => {
+    e.preventDefault();
+    if (!prompt.trim()) return;
+    
+    console.log('User object:', user);
+    console.log('Creating game with prompt:', prompt);
+    setLoading(true);
+    
+    try {
       const code = generateGameCode();
       const [team1, team2] = generateTeamNames();
+      
+      console.log('Generated code:', code);
+      console.log('Teams:', team1, team2);
       
       const { data: game, error } = await supabase
         .from('games')
@@ -517,8 +520,15 @@ const InsaneInTheBrainGame = () => {
         }])
         .select()
         .single();
-	
-	console.log('Game creation result:', { game, error });
+      
+      console.log('Game creation result:', { game, error });
+      
+      if (error) {
+        console.error('Database error:', error);
+        alert('Error creating game: ' + error.message);
+        setLoading(false);
+        return;
+      }
       
       if (game && user) {
         const colors = ['#FF6B9D', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2'];
@@ -534,79 +544,86 @@ const InsaneInTheBrainGame = () => {
             is_host: true
           }]);
         
+        setCreatedGame(game);
         setGameState(game);
         setGameCreated(true);
       }
       
       setLoading(false);
-    };
-    
-    if (gameCreated) {
-      return (
-        <div className="space-y-6">
-          <h2 className="text-2xl font-bold text-gray-800 text-center">Game Created!</h2>
-          <p className="text-center text-gray-600">Prompt: <span className="font-bold">{prompt}</span></p>
-          
-          <QRCodeDisplay gameCode={gameState.code} />
-          
-          <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
-            <p className="text-sm text-blue-800 text-center">
-              Share this link: <span className="font-mono">insane-brain.com/join/{gameState.code}</span>
-            </p>
-          </div>
-          
-          <button
-            onClick={() => navigateTo('lobby', gameState)}
-            className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all"
-          >
-            Go to Game Lobby
-          </button>
-          
-          <Footer />
-        </div>
-      );
+    } catch (err) {
+      console.error('Caught error:', err);
+      alert('Error: ' + err.message);
+      setLoading(false);
     }
-    
+  };
+  
+  if (gameCreated && createdGame) {
     return (
       <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-gray-800 text-center">Create a Game</h2>
+        <h2 className="text-2xl font-bold text-gray-800 text-center">Game Created!</h2>
+        <p className="text-center text-gray-600">Prompt: <span className="font-bold">{prompt}</span></p>
         
-        <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Enter a single word prompt
-              </label>
-              <input
-                type="text"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-pink-300 focus:outline-none text-center text-lg"
-                placeholder="e.g., dragons, pizza, robots..."
-                maxLength={20}
-              />
-            </div>
-            
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <p className="text-sm text-gray-600 text-center">
-                This word will inspire two unique stories for your teams to complete!
-              </p>
-            </div>
-            
-            <button
-              onClick={handleCreateGame}
-              disabled={!prompt.trim() || loading}
-              className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Creating...' : 'Create Game'}
-            </button>
-          </div>
+        <QRCodeDisplay gameCode={createdGame.code} />
+        
+        <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
+          <p className="text-sm text-blue-800 text-center">
+            Share this link: <span className="font-mono">insane-brain.com/join/{createdGame.code}</span>
+          </p>
         </div>
+        
+        <button
+          onClick={() => navigateTo('lobby', createdGame)}
+          className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all"
+        >
+          Go to Game Lobby
+        </button>
         
         <Footer />
       </div>
     );
-  };
+  }
+  
+  return (
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold text-gray-800 text-center">Create a Game</h2>
+      
+      <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Enter a single word prompt
+            </label>
+            <input
+              type="text"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-pink-300 focus:outline-none text-center text-lg"
+              placeholder="e.g., dragons, pizza, robots..."
+              maxLength={20}
+            />
+          </div>
+          
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <p className="text-sm text-gray-600 text-center">
+              This word will inspire two unique stories for your teams to complete!
+            </p>
+          </div>
+          
+          <button
+            onClick={handleCreateGame}
+            disabled={!prompt.trim() || loading}
+            className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Creating...' : 'Create Game'}
+          </button>
+        </div>
+      </div>
+      
+      <Footer />
+    </div>
+  );
+};
+
   
   const JoinGamePage = () => {
     const [gameCode, setGameCode] = useState('');
