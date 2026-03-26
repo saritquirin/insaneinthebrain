@@ -498,6 +498,7 @@ const InsaneInTheBrainGame = () => {
       
       setLoading(true);
       
+	console.log('User object:', user); 
 	console.log('Creating game with prompt:', prompt);
 	console.log('Generated code:', code);
 	console.log('Teams:', team1, team2);
