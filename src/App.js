@@ -104,6 +104,9 @@ const InsaneInTheBrainGame = () => {
   const [user, setUser] = useState(null);
   const [currentGame, setCurrentGame] = useState(null);
   const [players, setPlayers] = useState([]);
+  const [segments, setSegments] = useState([]);
+  const [userAnswers, setUserAnswers] = useState({});
+  const [hasVoted, setHasVoted] = useState(false);
   
   // Load saved state on mount
   useEffect(() => {
@@ -216,6 +219,49 @@ const InsaneInTheBrainGame = () => {
       supabase.removeChannel(channel);
     };
   }, [currentGame?.id]);
+
+  // Subscribe to game status changes
+  useEffect(() => {
+    if (!currentGame?.id) return;
+
+    const checkGameStatus = async () => {
+      const { data } = await supabase
+        .from('games')
+        .select('status, team1_story, team2_story')
+        .eq('id', currentGame.id)
+        .single();
+      
+      if (data) {
+        setCurrentGame(prev => ({ ...prev, ...data }));
+        
+        if (data.status === 'playing' && currentPage === 'lobby') {
+          navigateTo('play');
+        } else if (data.status === 'voting' && currentPage === 'play') {
+          navigateTo('voting');
+        } else if (data.status === 'finished' && (currentPage === 'play' || currentPage === 'voting')) {
+          navigateTo('results');
+        }
+      }
+    };
+
+    const channel = supabase
+      .channel(`game-status-${currentGame.id}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'games',
+          filter: `id=eq.${currentGame.id}`
+        },
+        checkGameStatus
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentGame?.id, currentPage]);
   
   // Page Components
   const HomePage = () => (
@@ -635,6 +681,71 @@ const InsaneInTheBrainGame = () => {
   const GameLobbyPage = () => {
     const currentPlayer = players.find(p => p.name === user?.display_name);
     const isHost = currentPlayer?.is_host || false;
+    const [starting, setStarting] = useState(false);
+    
+    const handleStartGame = async () => {
+      if (players.length < 2 || starting) return;
+      
+      setStarting(true);
+      
+      try {
+        // Generate stories using Claude API
+        const response = await fetch('/api/generate-story', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: currentGame.prompt,
+            playerCount: players.length
+          })
+        });
+        
+        const stories = await response.json();
+        
+        if (stories.error) {
+          throw new Error(stories.error);
+        }
+        
+        // Create segments for each blank
+        const allBlanks = [
+          ...stories.story1.blanks.map(b => ({ ...b, team: 0, story: 1 })),
+          ...stories.story2.blanks.map(b => ({ ...b, team: 1, story: 2 }))
+        ];
+        
+        // Assign blanks to players
+        const segmentsToCreate = allBlanks.map((blank, index) => {
+          const playerIndex = index % players.length;
+          const assignedPlayer = players[playerIndex];
+          
+          return {
+            game_id: currentGame.id,
+            player_id: assignedPlayer.id,
+            position: blank.position,
+            prompt_type: blank.type,
+            story_text: null,
+            default_text: `[${blank.type}]`
+          };
+        });
+        
+        // Save segments to database
+        await supabase.from('segments').insert(segmentsToCreate);
+        
+        // Update game status and store story templates
+        await supabase
+          .from('games')
+          .update({
+            status: 'playing',
+            team1_story: stories.story1.text,
+            team2_story: stories.story2.text
+          })
+          .eq('id', currentGame.id);
+        
+        // Navigation will happen automatically via the game status subscription
+      } catch (err) {
+        console.error('Error starting game:', err);
+        alert('Error starting game: ' + err.message);
+        setStarting(false);
+      }
+    };
     
     return (
       <div className="space-y-6">
@@ -659,11 +770,11 @@ const InsaneInTheBrainGame = () => {
         
         {isHost && (
           <button
-            onClick={() => navigateTo('play')}
-            disabled={players.length < 2}
+            onClick={handleStartGame}
+            disabled={players.length < 2 || starting}
             className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {players.length < 2 ? 'Need at least 2 players to start' : 'Start Game'}
+            {starting ? 'Starting Game...' : players.length < 2 ? 'Need at least 2 players to start' : 'Start Game'}
           </button>
         )}
         
@@ -672,6 +783,188 @@ const InsaneInTheBrainGame = () => {
             <p className="text-blue-800 text-center">Waiting for host to start the game...</p>
           </div>
         )}
+        
+        <Footer />
+      </div>
+    );
+  };
+
+  const PlayGamePage = () => {
+    const [mySegments, setMySegments] = useState([]);
+    const [answers, setAnswers] = useState({});
+    const [submitting, setSubmitting] = useState(false);
+    const currentPlayer = players.find(p => p.name === user?.display_name);
+    
+    useEffect(() => {
+      if (!currentGame?.id || !currentPlayer?.id) return;
+      
+      const loadMySegments = async () => {
+        const { data } = await supabase
+          .from('segments')
+          .select('*')
+          .eq('game_id', currentGame.id)
+          .eq('player_id', currentPlayer.id);
+        
+        if (data) setMySegments(data);
+      };
+      
+      loadMySegments();
+    }, [currentGame?.id, currentPlayer?.id]);
+    
+    const handleSubmit = async () => {
+      if (submitting) return;
+      
+      // Check if all answers are filled
+      const allAnswered = mySegments.every(seg => answers[seg.id]?.trim());
+      if (!allAnswered) {
+        alert('Please fill in all blanks before submitting!');
+        return;
+      }
+      
+      setSubmitting(true);
+      
+      try {
+        // Update each segment with the player's answer
+        for (const segment of mySegments) {
+          await supabase
+            .from('segments')
+            .update({ story_text: answers[segment.id] })
+            .eq('id', segment.id);
+        }
+        
+        // Check if all players have submitted
+        const { data: allSegments } = await supabase
+          .from('segments')
+          .select('story_text')
+          .eq('game_id', currentGame.id);
+        
+        const allSubmitted = allSegments.every(seg => seg.story_text !== null);
+        
+        if (allSubmitted) {
+          // Move game to results/voting phase
+          await supabase
+            .from('games')
+            .update({ status: 'finished' })
+            .eq('id', currentGame.id);
+        }
+        
+        // Show waiting message
+        alert('Answers submitted! Waiting for other players...');
+      } catch (err) {
+        console.error('Error submitting answers:', err);
+        alert('Error submitting answers. Please try again.');
+        setSubmitting(false);
+      }
+    };
+    
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold text-gray-800 text-center">Fill in the Blanks!</h2>
+        
+        <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
+          <p className="text-blue-800 text-center text-sm">
+            Fill in each blank to make the story as funny as possible! You won't see the context until the big reveal.
+          </p>
+        </div>
+        
+        <div className="space-y-4">
+          {mySegments.map((segment, index) => (
+            <div key={segment.id} className="bg-white p-4 rounded-lg border-2 border-gray-100">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Blank #{index + 1}: {segment.prompt_type}
+              </label>
+              <input
+                type="text"
+                className="w-full p-3 border-2 border-gray-200 rounded-lg focus:border-pink-300 focus:outline-none"
+                placeholder={`Enter a ${segment.prompt_type}...`}
+                value={answers[segment.id] || ''}
+                onChange={(e) => setAnswers({...answers, [segment.id]: e.target.value})}
+              />
+            </div>
+          ))}
+        </div>
+        
+        <button
+          onClick={handleSubmit}
+          disabled={submitting}
+          className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {submitting ? 'Submitting...' : 'Submit Answers'}
+        </button>
+        
+        <Footer />
+      </div>
+    );
+  };
+
+  const GameResultsPage = () => {
+    const [finalStories, setFinalStories] = useState({ team1: '', team2: '' });
+    
+    useEffect(() => {
+      if (!currentGame?.id) return;
+      
+      const buildStories = async () => {
+        const { data: allSegments } = await supabase
+          .from('segments')
+          .select('*, players(name, team)')
+          .eq('game_id', currentGame.id)
+          .order('position');
+        
+        if (!allSegments) return;
+        
+        // Build team 1 story
+        let story1 = currentGame.team1_story;
+        const team1Segments = allSegments.filter(s => s.players.team === 0);
+        team1Segments.forEach((seg, index) => {
+          const playerName = seg.players.name;
+          const answer = seg.story_text || seg.default_text;
+          story1 = story1.replace(`[BLANK:${seg.prompt_type}]`, `**${answer}** (${playerName})`);
+        });
+        
+        // Build team 2 story
+        let story2 = currentGame.team2_story;
+        const team2Segments = allSegments.filter(s => s.players.team === 1);
+        team2Segments.forEach((seg, index) => {
+          const playerName = seg.players.name;
+          const answer = seg.story_text || seg.default_text;
+          story2 = story2.replace(`[BLANK:${seg.prompt_type}]`, `**${answer}** (${playerName})`);
+        });
+        
+        setFinalStories({ team1: story1, team2: story2 });
+      };
+      
+      buildStories();
+    }, [currentGame]);
+    
+    const handlePlayAgain = () => {
+      setCurrentGame(null);
+      navigateTo('home');
+    };
+    
+    return (
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold text-gray-800 text-center">The Big Reveal!</h2>
+        
+        <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
+          <h3 className="text-xl font-bold text-pink-500 mb-4">{currentGame?.team1_name}</h3>
+          <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+            {finalStories.team1}
+          </p>
+        </div>
+        
+        <div className="bg-white p-6 rounded-lg border-2 border-gray-100">
+          <h3 className="text-xl font-bold text-blue-500 mb-4">{currentGame?.team2_name}</h3>
+          <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+            {finalStories.team2}
+          </p>
+        </div>
+        
+        <button
+          onClick={handlePlayAgain}
+          className="w-full bg-gradient-to-r from-pink-500 to-blue-500 text-white font-bold py-3 px-6 rounded-lg hover:from-pink-600 hover:to-blue-600 transition-all"
+        >
+          Play Again
+        </button>
         
         <Footer />
       </div>
@@ -783,6 +1076,8 @@ const InsaneInTheBrainGame = () => {
       case 'create': return <CreateGamePage />;
       case 'join': return <JoinGamePage />;
       case 'lobby': return <GameLobbyPage />;
+      case 'play': return <PlayGamePage />;
+      case 'results': return <GameResultsPage />;
       case 'about': return <AboutPage />;
       case 'leaderboard': return <LeaderboardPage />;
       default: return <HomePage />;
